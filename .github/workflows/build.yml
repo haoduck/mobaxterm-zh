@@ -1,0 +1,174 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # The GUI tests need a display; xvfb gives them one without a desktop.
+      - name: Install GUI test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - run: pip install -e ".[dev]"
+      - name: Run tests
+        run: xvfb-run -a pytest -q
+
+  build:
+    name: ${{ matrix.label }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+            ext: .exe
+          - os: ubuntu-latest
+            label: linux-x64
+            ext: ""
+          - os: macos-latest
+            label: macos-arm64
+            ext: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build (PyInstaller)
+        run: python -m PyInstaller --clean --noconfirm mobaxterm-zh.spec
+
+      # PyInstaller names output after each Analysis' `name=`, with .exe only on
+      # Windows. Rename to platform-explicit artifacts before anything
+      # references them, so upload paths and smoke tests cannot disagree.
+      - name: Rename artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "dist/mobaxterm-zh${{ matrix.ext }}" \
+             "dist/mobaxterm-zh-cli-${{ matrix.label }}${{ matrix.ext }}"
+          mv "dist/mobaxterm-zh-gui${{ matrix.ext }}" \
+             "dist/mobaxterm-zh-gui-${{ matrix.label }}${{ matrix.ext }}"
+          chmod +x dist/* || true
+          ls -l dist/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobaxterm-zh-${{ matrix.label }}
+          path: |
+            dist/mobaxterm-zh-cli-${{ matrix.label }}${{ matrix.ext }}
+            dist/mobaxterm-zh-gui-${{ matrix.label }}${{ matrix.ext }}
+          if-no-files-found: error
+
+      # A build that cannot find its own glossary would only fail for the user
+      # at runtime, so prove the frozen binary really can load it.
+      #
+      # `shell: bash` is explicit so the step behaves identically on all three
+      # runners; without it windows-latest uses pwsh and quoting differs.
+      #
+      # This gates the release. It is a hard check because a failure now means
+      # the binary itself is broken.
+      - name: Smoke test the frozen CLI binary
+        shell: bash
+        run: >
+          python .github/smoke_test.py
+          "dist/mobaxterm-zh-cli-${{ matrix.label }}${{ matrix.ext }}"
+
+      # The GUI binary is a console-less executable, so its exit code cannot be
+      # read normally: it detaches and opens a window. Assert the file exists
+      # and is a real executable of the right shape instead of running it.
+      - name: Verify the frozen GUI binary
+        shell: bash
+        run: >
+          python .github/check_gui_binary.py
+          "dist/mobaxterm-zh-gui-${{ matrix.label }}${{ matrix.ext }}"
+          "${{ runner.os }}"
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List attached binaries
+        run: ls -l artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            Standalone binaries of `mobaxterm-zh` — no Python required.
+
+            ## Graphical interface (start here)
+
+            | Platform | File |
+            | --- | --- |
+            | Windows x64 | `mobaxterm-zh-gui-windows-x64.exe` |
+            | Linux x64 | `mobaxterm-zh-gui-linux-x64` |
+            | macOS arm64 | `mobaxterm-zh-gui-macos-arm64` |
+
+            Pick a file with Browse (or drag it onto the window), then press
+            开始汉化.
+
+            ## Command line
+
+            | Platform | File |
+            | --- | --- |
+            | Windows x64 | `mobaxterm-zh-cli-windows-x64.exe` |
+            | Linux x64 | `mobaxterm-zh-cli-linux-x64` |
+            | macOS arm64 | `mobaxterm-zh-cli-macos-arm64` |
+
+            ```bash
+            mobaxterm-zh-cli-windows-x64.exe patch MobaXterm_Personal_26.5.exe
+            ```
+
+            ## What it does
+
+            Localizes a stock MobaXterm Windows build into Simplified Chinese by
+            rewriting its Delphi DFM resources and runtime string table **in
+            place, byte-exactly** — the output file is the same size as the
+            input.
+
+            The output is always a Windows `.exe`, whichever platform you run
+            the tool on.
+
+            ## Notes
+
+            - Windows may warn about an unknown publisher on first run; these
+              builds are unsigned.
+            - Drag-and-drop needs the optional `tkinterdnd2` package; without it
+              the Browse button still works.
+            - MobaXterm is commercial, closed-source software by MobaTech. This
+              project only rewrites user-interface text; it does not decompile
+              functionality or bypass any licensing check.

@@ -1,0 +1,14 @@
+# Normalise line endings in the repository, check out per-platform defaults.
+* text=auto
+
+# The Actions workflow must use LF or its YAML block scalars break on Linux.
+.github/workflows/*.yml text eol=lf
+*.py text eol=lf
+*.spec text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+# Binary-ish assets that a user might drop next to the repo
+*.exe binary
+*.zip binary
+*.plugin binary

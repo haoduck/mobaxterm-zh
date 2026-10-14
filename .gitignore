@@ -1,0 +1,34 @@
+# --- build / packaging artifacts ---
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.spec.bak
+
+# --- the tool's own output (never commit these) ---
+*_zh.exe
+*_汉化.exe
+_e2e_zh.exe
+strings.json
+todo.md
+对照表.md
+*_对照表.md
+
+# --- MobaXterm's portable-app files: these appear in the project directory if
+#     you ever run the tool (or MobaXterm) from inside the repo ---
+MobaXterm.ini
+MobaXterm backup.zip
+Custom.mxtpro
+*.mxtcolors
+MobaXterm_Portable_*/
+MobaXterm_Personal_*.exe
+CygUtils*.plugin
+*.zip
+
+# --- virtualenvs / editors ---
+.venv/
+venv/
+.idea/
+.vscode/
